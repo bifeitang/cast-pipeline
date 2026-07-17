@@ -1,0 +1,5 @@
+{"metric":"Weber = (med I_WM(all) - med I_GMring)/med I_GMring",
+ "cast_Weber_before":0.2773,"cast_Weber_before_deepWM":0.3102,"cast_Weber_before_GMmask":0.3766,
+ "nki_Weber_target":0.3933,"W_target_used":0.3933,"GM_ring_anchor":5.1061,"wm_gain_g":1.4181,
+ "achieved_Weber_after":0.3931,"achieved_Weber_after_GMmask":0.5015,"moved_toward_nki":true,
+ "note":"template-only intervention; GM/CSF/background fixed by monotone anchor at GM ring level; published age7_male_wm.nii.gz reused verbatim as measurement target"}

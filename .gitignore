@@ -1,0 +1,31 @@
+# Code-only repository — never commit imaging data or large artifacts
+*.nii
+*.nii.gz
+*.mgz
+*.npz
+*.csv
+*.tsv
+*.jsonl
+*.png
+*.pdf
+*.sif
+*.tar
+*.tar.gz
+
+# subject manifests / run logs (may contain identifiers)
+*manifest*.txt
+LAUNCH_INFO*
+*LAUNCH_INFO*
+
+# subject download lists (HBN/NDA identifiers) — never publish
+download_scripts/
+
+# exception: one illustrative demo template is tracked (full set lives in the data DOI)
+!sample_template/
+!sample_template/*.nii.gz
+
+# python / Jupyter / OS
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+.DS_Store
