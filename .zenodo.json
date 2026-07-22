@@ -1,0 +1,35 @@
+{
+  "upload_type": "software",
+  "title": "BRAIN CAST: processing pipeline for children's age- and sex-specific pediatric brain MRI templates",
+  "description": "<p>Reproducible pipeline that builds the <strong>BRAIN CAST</strong> pediatric brain MRI template library (28 age- and sex-specific T1-weighted templates, ages 5&ndash;18) from the Healthy Brain Network (HBN), together with the validation suite used to evaluate it.</p><p>Contents: a ten-step constraint-aware preprocessing stream (SLURM/Apptainer), the ANTs <code>antsMultivariateTemplateConstruction2.sh</code> driver plus the exact as-run per-stratum scripts, the downstream-fidelity validation suite, figure-generation scripts, and a license-free container build in which CAT12 SANLM is replaced by ANTs <code>DenoiseImage</code> so the pipeline runs without a MATLAB license.</p><p>Code only &mdash; no MRI data and no subject identifiers are included. HBN data are distributed by the Child Mind Institute through INDI under their data-use terms and are not redistributed here. BRAIN CAST is derived from HBN and is <strong>not</strong> a Child Mind Institute product.</p><p>Companion to the BRAIN CAST Data Descriptor (Scientific Data, in review) and the companion methods manuscript.</p>",
+  "creators": [
+    {
+      "name": "Hu, Yang",
+      "affiliation": "Department of Electrical and Computer Engineering, University of Houston, Houston, TX, USA"
+    },
+    {
+      "name": "Contreras-Vidal, Jose L.",
+      "affiliation": "Department of Electrical and Computer Engineering, University of Houston, Houston, TX, USA"
+    }
+  ],
+  "license": "MIT",
+  "access_right": "open",
+  "language": "eng",
+  "keywords": [
+    "pediatric MRI",
+    "brain template",
+    "neuroimaging atlas",
+    "neurodevelopment",
+    "ANTs",
+    "MRIQC",
+    "FreeSurfer",
+    "Healthy Brain Network",
+    "reproducible pipeline"
+  ],
+  "grants": [
+    {
+      "id": "10.13039/100000001::2137255"
+    }
+  ],
+  "notes": "Developed at the NSF IUCRC BRAIN Center (Award #2137255), University of Houston. Computational resources provided by the University of Houston Research Computing Data Core."
+}
