@@ -1,0 +1,45 @@
+# setup.sh.example  —  portable, MATLAB-free in-container environment for the
+# CAST pipeline's license-free image (container/Dockerfile).
+#
+# HOW TO USE: copy this to the ROOT of your data directory ($DB) as `setup.sh`,
+# so the step scripts find it at `/mnt/setup.sh` inside the container:
+#     cp container/setup.sh.example  "$DB"/setup.sh
+# The pipeline stages begin with `source /mnt/setup.sh`.
+#
+# This matches the tool paths baked into container/Dockerfile. If you built the
+# image with different prefixes, edit the paths below.
+#
+# NOTE: deliberately no `set -u` — FreeSurfer's SetUpFreeSurfer.sh references
+# unset variables and would abort under `set -u` (silently, since stderr is
+# often redirected). See container/CONTAINER_SETUP.md.
+
+# ---- FSL 6.0.7 ------------------------------------------------------------
+export FSLDIR=/opt/fsl
+export FSLOUTPUTTYPE=NIFTI_GZ
+[ -f "$FSLDIR/etc/fslconf/fsl.sh" ] && . "$FSLDIR/etc/fslconf/fsl.sh"
+export PATH="$FSLDIR/bin:$PATH"
+
+# ---- ANTs 2.5.0 -----------------------------------------------------------
+export ANTSPATH=/opt/ants/bin
+export PATH="$ANTSPATH:$PATH"
+
+# ---- AFNI 23.2.04 ---------------------------------------------------------
+export PATH="/opt/afni:$PATH"
+
+# ---- FreeSurfer 7.4.1 -----------------------------------------------------
+# A valid (free) license.txt must be bind-mounted at $FREESURFER_HOME/license.txt.
+export FREESURFER_HOME=/opt/freesurfer
+[ -f "$FREESURFER_HOME/SetUpFreeSurfer.sh" ] && source "$FREESURFER_HOME/SetUpFreeSurfer.sh" >/dev/null 2>&1
+
+# ---- writable temp (SLURM's $TMPDIR is NOT visible inside the container) ---
+# The orchestrator binds a scratch dir to /writabletemp; use it.
+[ -d /writabletemp ] && export TMPDIR=/writabletemp
+
+# ---- threads --------------------------------------------------------------
+export ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS="${NT:-8}"
+export OMP_NUM_THREADS="${NT:-8}"
+
+# ---- DeepBET (skull stripping) uses PyTorch in the SYSTEM python3 ----------
+# FreeSurfer bundles its own python3; if a stage that needs torch reports
+# "No module named 'torch'", make sure /usr/bin comes before $FREESURFER_HOME/bin
+# for that call (see CONTAINER_SETUP.md), e.g.:  PATH=/usr/bin:$PATH python3 ...
