@@ -23,7 +23,19 @@ Style reproduces the published PNG (1581x1104): 2x2 panels, seaborn-deep blue/re
 than the project's Okabe palette, mean with a 95% CI band per age-sex bin, per-sex OLS
 slope annotated top-left, and a legend carrying the per-year n range.
 
-Usage:  make_figure_DD4_tissue_volumes.py <tissue_volumes_all.csv> <out.png>
+TWO MODES
+  default   plot the screened subject pool described above, binned by each subject's own
+            rounded age. This is what the figure showed historically.
+  --roster  plot the per-template CONSTRUCTION rosters instead: one row per contributing
+            subject, binned by the stratum it actually built. This is the cohort the
+            caption originally claimed, it matches Table 1, and unlike the pool it does
+            respond to template rebuilds. Input is the TSV from
+            morphometry/build_roster_tissue_volumes.py.
+
+Both inputs carry FreeSurfer aseg volumes via mri_segstats. FSL FAST volumes are a
+different measurement and must not be substituted into either.
+
+Usage:  make_figure_DD4_tissue_volumes.py <input> <out.png> [--roster]
 """
 import csv
 import collections
@@ -43,14 +55,19 @@ PANELS = [("icv_ml", "Brain volume (WM+GM+CSF, segmented)"),
 FIG_W, FIG_H, DPI = 1581, 1104, 150
 
 
-def load(path):
-    """bin[(age, sex)] -> list of row dicts, binned to the NEAREST year"""
+def load(path, roster=False):
+    """bin[(age, sex)] -> list of row dicts.
+
+    pool mode   : bin by the subject's own age, rounded to the nearest year
+    roster mode : bin by the stratum the subject contributed to (no rounding involved)
+    """
     out = collections.defaultdict(list)
+    delim = "\t" if roster else ","
     with open(path) as f:
-        for r in csv.DictReader(f):
+        for r in csv.DictReader(f, delimiter=delim):
             try:
-                a = round(float(r["age"]))
-            except (TypeError, ValueError):
+                a = int(r["age"]) if roster else round(float(r["age"]))
+            except (TypeError, ValueError, KeyError):
                 continue
             if a in AGES and r.get("sex") in ("male", "female"):
                 out[(a, r["sex"])].append(r)
@@ -80,15 +97,18 @@ def slope(x, y):
 
 
 def main():
-    if len(sys.argv) < 3:
+    argv = [a for a in sys.argv[1:] if not a.startswith("--")]
+    roster = "--roster" in sys.argv
+    if len(argv) < 2:
         raise SystemExit(__doc__)
-    bins = load(sys.argv[1])
+    bins = load(argv[0], roster=roster)
     if not bins:
         raise SystemExit("no usable rows -- check the CSV path and its age/sex columns")
 
     counts = {s: [len(bins.get((a, s), [])) for a in AGES if bins.get((a, s))]
               for s in ("male", "female")}
     total = sum(len(v) for v in bins.values())
+    print("mode: %s" % ("construction rosters" if roster else "screened subject pool"))
     print("subjects plotted: %d in %d age-sex bins" % (total, len(bins)))
     for s in ("male", "female"):
         print("  %-7s n per year %d-%d" % (s, min(counts[s]), max(counts[s])))
@@ -100,9 +120,14 @@ def main():
             ax.fill_between(a, m - h, m + h, color=colour, alpha=0.18, lw=0)
             ax.plot(a, m, "-o", color=colour, ms=5, lw=1.6,
                     label="%s (n=%d–%d/yr)" % (sex, min(counts[sex]), max(counts[sex])))
+            # slope annotations carry a translucent backing: on the roster cohorts the
+            # series sit high enough in the gray-matter panel that bare text lands on the
+            # male band and becomes unreadable.
             ax.text(0.03, 0.955 if tag == "M" else 0.875, "%s: %+.1f mL/yr" % (tag, slope(a, m)),
                     transform=ax.transAxes, color=colour, fontsize=10, fontweight="bold",
-                    va="top", ha="left")
+                    va="top", ha="left", zorder=5,
+                    bbox=dict(facecolor="white", edgecolor="none", alpha=0.72,
+                              boxstyle="round,pad=0.18"))
         ax.set_title(title, fontsize=12, fontweight="bold")
         ax.set_xlabel("age (years)", fontsize=10)
         ax.set_ylabel("volume (mL)", fontsize=10)
@@ -111,11 +136,13 @@ def main():
         for sp in ("top", "right"):
             ax.spines[sp].set_visible(False)
         ax.legend(fontsize=8.5, loc="lower right", framealpha=0.9)
-    fig.suptitle("Developmental tissue-volume norms of the CAST cohorts "
-                 "(per-subject mean ± 95% CI)", fontsize=13.5, fontweight="bold")
+    fig.suptitle("Developmental tissue-volume norms of the CAST %s "
+                 "(per-subject mean ± 95%% CI)"
+                 % ("construction cohorts" if roster else "cohorts"),
+                 fontsize=13.5, fontweight="bold")
     fig.tight_layout(rect=[0, 0, 1, 0.955])
-    fig.savefig(sys.argv[2], dpi=DPI, facecolor="white")
-    print("wrote", sys.argv[2])
+    fig.savefig(argv[1], dpi=DPI, facecolor="white")
+    print("wrote", argv[1])
 
 
 if __name__ == "__main__":
