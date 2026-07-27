@@ -404,9 +404,24 @@ def run() -> None:
     unchecked("manuscript", "cluster service units",
               "Slurm accounting; measured 575,006 CPU-hours / 70,961 jobs on 2026-07-27. "
               "NOTE 'service unit' may not equal CPU-hour in RCDC accounting")
-    unchecked("manuscript", "background-shell fill description",
-              "as-run preprocessing code not located on carya; ledger reports a constant "
-              "fslmaths -mul at 1% of BACKGROUND SD, not Gaussian noise at 1% of in-brain signal")
+    # Resolved 2026-07-27 against the as-run code, which is in PediatricMriDB/, NOT in
+    # /project/contreras-vidal/Image/ where the audit ledger said to look. Identical in all
+    # four step2_uh_ped_temp_preprocess*.sh variants, so there is no ambiguity about which
+    # was run:
+    #     bg_std=$(fslstats T1 -k outside -s)        # SD of the air region
+    #     noise_lvl=$(echo "${bg_std} * 0.01" | bc)  # 1% of BACKGROUND SD
+    #     fslmaths outside -mul ${noise_lvl}         # binary mask x scalar => CONSTANT
+    # So: not Gaussian, not random, not 1% of in-brain signal, and applied BEYOND the
+    # buffer shell rather than inside it (the shell keeps its real T1 intensities).
+    # The paper's description was wrong on all three counts and is now corrected.
+    if states(man, "Gaussian noise"):
+        results.append(("MISMATCH", "manuscript", "background fill described as Gaussian noise",
+                        "as-run code applies a CONSTANT (binary mask x scalar) at 1% of the "
+                        "background SD; no random values are generated"))
+    if states(man, "1\\% of typical in-brain signal", "1% of typical in-brain signal"):
+        results.append(("MISMATCH", "manuscript", "background fill amplitude",
+                        "as-run scale is 1% of the BACKGROUND standard deviation, "
+                        "not 1% of in-brain signal"))
     unchecked("manuscript", "F2 clean displacement",
               "mean_disp_mm for age-11 female is 2025-11, measured against a superseded "
               "template; derivation script does not exist")
