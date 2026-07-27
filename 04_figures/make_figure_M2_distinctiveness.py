@@ -43,16 +43,23 @@ fig.tight_layout(rect=[0,0,1,0.96]); save(fig,"figures_final/M2_distinctiveness"
 # verdict numbers
 print("=== distinctiveness verdict ===")
 for k in ["edge_strength","gmwm_contrast","fd","wm_ml","gm_ml","icv_ml"]:
-    ages=np.array([r["age"] for r in rows]); v=np.array([r[k] for r in rows])
+    ok=[r for r in rows if r.get(k) is not None and np.isfinite(r[k])]
+    if len(ok)<len(rows):
+        print(f"  {k}: SKIPPED {len(rows)-len(ok)} stratum/strata with no comparable value")
+    if not ok: continue
+    ages=np.array([r["age"] for r in ok]); v=np.array([r[k] for r in ok])
     print(f"  {k}: age-corr {np.corrcoef(ages,v)[0,1]:+.2f}  range [{v.min():.2f},{v.max():.2f}]")
 # M vs F
 for k in ["wm_ml","gm_ml","icv_ml","gmwm_contrast"]:
-    mf=[r[k] for r in rows if r["sex"]=="male"]; ff=[r[k] for r in rows if r["sex"]=="female"]
+    mf=[r[k] for r in rows if r["sex"]=="male" and r.get(k) is not None]
+    ff=[r[k] for r in rows if r["sex"]=="female" and r.get(k) is not None]
+    if not mf or not ff: continue
     print(f"  {k}: male mean {np.mean(mf):.1f} vs female {np.mean(ff):.1f}")
 # age9 z vs neighbors (age7-11 same sex)
 print("=== age9 outlier check (z vs age7-11 same sex) ===")
 for sex in ["female","male"]:
     nb=[r for r in rows if r["sex"]==sex and r["age"] in (7,8,10,11)]
     for k in ["edge_strength","gmwm_contrast","fd","vox_mm"]:
-        nbv=np.array([r[k] for r in nb]); a9=[r[k] for r in rows if r["sex"]==sex and r["age"]==9]
-        if a9 and nbv.std()>0: print(f"  {sex} {k}: age9={a9[0]:.3f}  neighbors {nbv.mean():.3f}±{nbv.std():.3f}  z={(a9[0]-nbv.mean())/nbv.std():+.2f}")
+        nbv=np.array([r[k] for r in nb if r.get(k) is not None])
+        a9=[r[k] for r in rows if r["sex"]==sex and r["age"]==9 and r.get(k) is not None]
+        if a9 and nbv.size and nbv.std()>0: print(f"  {sex} {k}: age9={a9[0]:.3f}  neighbors {nbv.mean():.3f}±{nbv.std():.3f}  z={(a9[0]-nbv.mean())/nbv.std():+.2f}")
