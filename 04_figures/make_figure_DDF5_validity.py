@@ -1,5 +1,6 @@
 """DD-F5 (CENTERPIECE): gray-white interface validity across the template library.
-From the at-scale Option-B sweep (256 matched subjects, ages 5-12, both sexes).
+From the at-scale Option-B sweep (matched subjects, ages 5-12, both sexes); the
+subject count in the title is derived from the per-stratum summaries, not hardcoded.
 a, per-stratum cortical mean error vs age -- sub-voxel (~1.1 mm) and flat across the
    library = consistent validity.
 b, per-stratum % of cortical surface within 1 and 2 mm.
@@ -61,7 +62,7 @@ except Exception as e:
     ax3.text(0.5,0.5,f"slice unavailable\n{e}",ha="center",fontsize=6); ax3.axis("off")
 panel_letter(ax3,"c")
 
-fig.suptitle(f"Gray-white interface validity: held-out subjects align to the matched template with sub-voxel error (pooled {pooled:.2f} mm, 256 subjects)",fontsize=9)
+fig.suptitle(f"Gray-white interface validity: held-out subjects align to the matched template with sub-voxel error (pooled {pooled:.2f} mm, {sum(d['n'] for d in S)} subjects)",fontsize=9)
 fig.tight_layout(rect=[0,0,1,0.94]); save(fig,"figures_final/DDF5_validity_heatmap")
 
 # summary table (LaTeX-ready)
