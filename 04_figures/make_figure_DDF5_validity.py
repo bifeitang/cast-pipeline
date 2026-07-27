@@ -43,7 +43,12 @@ ax2.bar(x-0.2,[d["p2"] for d in Ss],width=0.4,color=FEMALE,label="within 2 mm")
 ax2.bar(x+0.2,[d["p1"] for d in Ss],width=0.4,color=MALE,label="within 1 mm")
 ax2.set_xticks(x); ax2.set_xticklabels(labels,rotation=90,fontsize=5)
 ax2.set_ylabel("% of cortical surface"); ax2.set_ylim(0,100)
-ax2.set_title("Coverage within tolerance",fontsize=8.5); ax2.legend(fontsize=6,loc="lower right"); panel_letter(ax2,"b")
+ax2.set_title("Coverage within tolerance",fontsize=8.5)
+# The bars top out near 89%, so a horizontal legend in the free band above them does
+# not cover any data. "lower right" used to sit directly on the 11F/11M/12F/12M bars.
+ax2.legend(fontsize=5.5,loc="upper center",ncol=2,frameon=False,borderaxespad=0.1,
+           handlelength=1.2,columnspacing=1.2)
+panel_letter(ax2,"b")
 
 # (c) example spatial heat map (age9_female), sagittal slice
 try:
