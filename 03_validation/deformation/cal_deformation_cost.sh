@@ -312,9 +312,12 @@ fi
 make_total_disp() {
   local direction="$1"
   local out="$2"
+  # Optional third arg overrides the global choice, so the caller can compose the composed
+  # field for the Jacobian even when the displacement is SyN-only.
+  local comp="${3:-$DISP_COMPONENT}"
   case "${direction}" in
     moving2template)
-      if [[ "${DISP_COMPONENT}" == "syn" ]]; then
+      if [[ "${comp}" == "syn" ]]; then
         antsApplyTransforms -d 3 -r "${TMPL}" -o "[${out},1]" -t "${WARP}"
       else
         antsApplyTransforms -d 3 -r "${TMPL}" -o "[${out},1]" -t "${WARP}" -t "${AFF}"
@@ -325,7 +328,7 @@ make_total_disp() {
         echo "ERROR: Inverse warp not found for template2moving: ${INVWARP}" >&2
         exit 1
       fi
-      if [[ "${DISP_COMPONENT}" == "syn" ]]; then
+      if [[ "${comp}" == "syn" ]]; then
         antsApplyTransforms -d 3 -r "${TMPL}" -o "[${out},1]" -t "${INVWARP}"
       else
         antsApplyTransforms -d 3 -r "${TMPL}" -o "[${out},1]" -t "[${AFF},1]" -t "${INVWARP}"
@@ -466,11 +469,23 @@ compute_metrics_for_field() {
   local detJ="$4"
   local out_metrics="$5"
   local direction_label="$6"
+  # Field the JACOBIAN is taken from. Defaults to the displacement field, but the caller
+  # passes the composed field explicitly when -disp-component syn is in force.
+  local jac_field="${7:-$vec_field}"
 
   vector_magnitude "${vec_field}" "${disp_mag}"
 
-  CreateJacobianDeterminantImage 3 "${vec_field}" "${logJ}" 1
-  CreateJacobianDeterminantImage 3 "${vec_field}" "${detJ}" 0
+  # The Jacobian must ALWAYS come from the composed affine o SyN field, whatever
+  # -disp-component selects. The affine here is not a pure translation -- it carries scale
+  # and shear -- so a SyN-only Jacobian is a genuinely different quantity, not a
+  # translation-invariant restatement of the same one. Measured on the age-9-female
+  # validation set, taking it from the SyN-only field moved mean_logJ by a median of 84%
+  # and dropped its correlation with the published values to r=0.77, while the displacement
+  # it was paired with reproduced at r=0.996. Sharing one field between the two metrics
+  # would therefore have silently redefined every Jacobian column in the deformation table
+  # -- including the ones Sec. 2.7 rests on -- as a side effect of fixing the displacement.
+  CreateJacobianDeterminantImage 3 "${jac_field}" "${logJ}" 1
+  CreateJacobianDeterminantImage 3 "${jac_field}" "${detJ}" 0
 
   local mean_disp median_disp p95_disp
   mean_disp="$(fslstats "${disp_mag}" -k "${TMASK}" -M | awk '{print $1}')"
@@ -556,17 +571,27 @@ PY
   fi
 }
 
-# ---------- Compose total displacement field (Affine + Warp) ----------
+# ---------- Compose the displacement field ----------
 TOTAL_DISP="${OUTDIR}/total_disp.nii.gz"
-echo "[compose] transform_direction=${TRANSFORM_DIRECTION} -> ${TOTAL_DISP}" >&2
+echo "[compose] transform_direction=${TRANSFORM_DIRECTION} disp_component=${DISP_COMPONENT} -> ${TOTAL_DISP}" >&2
 make_total_disp "${TRANSFORM_DIRECTION}" "${TOTAL_DISP}"
 
-# ---------- Primary metrics (computed on total displacement) ----------
+# The Jacobian always comes from the COMPOSED field so its columns stay comparable with
+# every previously published run. When the displacement is SyN-only these are two
+# different fields, so the composed one is built separately here.
+JAC_FIELD="${TOTAL_DISP}"
+if [[ "${DISP_COMPONENT}" == "syn" ]]; then
+  JAC_FIELD="${OUTDIR}/total_disp_composed.nii.gz"
+  echo "[compose] jacobian field (affine o SyN) -> ${JAC_FIELD}" >&2
+  make_total_disp "${TRANSFORM_DIRECTION}" "${JAC_FIELD}" "total"
+fi
+
+# ---------- Primary metrics ----------
 DISP_MAG="${OUTDIR}/disp_mag.nii.gz"
 LOGJ_TOTAL="${OUTDIR}/logJ_total.nii.gz"
 DETJ_TOTAL="${OUTDIR}/detJ_total.nii.gz"
 
-compute_metrics_for_field "${TOTAL_DISP}" "${DISP_MAG}" "${LOGJ_TOTAL}" "${DETJ_TOTAL}" "metrics.txt" "${TRANSFORM_DIRECTION}"
+compute_metrics_for_field "${TOTAL_DISP}" "${DISP_MAG}" "${LOGJ_TOTAL}" "${DETJ_TOTAL}" "metrics.txt" "${TRANSFORM_DIRECTION}" "${JAC_FIELD}"
 
 # ---------- Optional diagnostics: compute BOTH directions ----------
 if [[ "${DIAGNOSTICS}" -eq 1 ]]; then
