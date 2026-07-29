@@ -110,7 +110,18 @@ def q1_age_effect(rows):
         print(f"  |dage| >= 2  : median {np.median(far):.3f} mm  (n={len(far)})")
         print(f"  effect       : {eff:+.3f} mm   Mann-Whitney p = {p:.2e}")
         print(f"  effect / SD  : {eff / v.std():.2f}   <- mask era was 0.55/3.41 = 0.16")
-        print(f"  VERDICT      : {'age effect RESOLVED' if p < 0.05 else 'no detectable age effect'}")
+        # Significance alone is meaningless at n>1000. Judge on effect size, in voxels.
+        vox = 0.8
+        print(f"  effect in voxels: {abs(eff)/vox*100:.1f}% of a {vox} mm voxel")
+        if p >= 0.05:
+            print("  VERDICT      : no detectable age effect")
+        elif abs(eff) / v.std() < 0.3:
+            print(f"  VERDICT      : statistically detectable (p={p:.1e}) but PRACTICALLY")
+            print(f"                 NEGLIGIBLE -- {abs(eff)/v.std():.2f} SD, "
+                  f"{abs(eff)/vox*100:.0f}% of a voxel. Significance here is a function of")
+            print("                 n, not of magnitude. Do not report this as an effect.")
+        else:
+            print(f"  VERDICT      : age effect resolved, {abs(eff)/v.std():.2f} SD")
     for a in sorted({r["tpl_age"] for r in rows}):
         s = np.array([r["disp"] for r in rows if r["tpl_age"] == a])
         print(f"    template age {a:>2}: median {np.median(s):.3f} mm  SD {s.std():.3f}  n={len(s)}")
@@ -157,13 +168,19 @@ def q3_discriminates(rows):
         print(f"  slope                  : {slope:+.4f} mm per year of mismatch")
         print(f"  signal-to-noise        : slope*4y / SD = {abs(slope) * 4 / v.std():.2f}")
         print()
-        if p_ < 0.05:
-            print("  The metric DOES track age mismatch. The paper's stated reason for")
-            print("  de-emphasising deformation cost -- that SyN saturates it -- was drawn")
-            print("  from the mask data and needs rewriting. Structural fidelity remains the")
-            print("  primary evidence; this becomes an ADDITIONAL argument for age specificity.")
+        snr = abs(slope) * 4 / v.std()
+        if p_ < 0.05 and snr >= 0.5:
+            print("  The metric DOES track age mismatch materially. The paper's stated reason")
+            print("  for de-emphasising deformation cost -- that SyN saturates it -- was drawn")
+            print("  from the mask data and would need rewriting.")
+        elif p_ < 0.05:
+            print(f"  Statistically present (p={p_:.1e}) but immaterial: four years of age")
+            print(f"  mismatch moves the cost by {abs(slope)*4:.3f} mm, {snr:.2f} SD. On")
+            print("  WELL-POSED registrations the metric still barely responds to age.")
+            print("  The SyN-saturation argument SURVIVES and is now properly supported --")
+            print("  it rests on a registration that worked, not on an ill-posed one.")
         else:
-            print("  The metric still does not track age mismatch on well-posed registrations,")
+            print("  The metric does not track age mismatch on well-posed registrations,")
             print("  so the SyN-saturation argument survives and is now properly supported.")
 
 
