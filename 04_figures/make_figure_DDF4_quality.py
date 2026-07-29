@@ -1,12 +1,12 @@
 """DD-F4: template quality panel vs NKI reference.
 Scale-free, fair cross-template metrics: GM-WM contrast (Weber, intensity-ratio) and
-structural complexity (fractal dimension) by age, UH-Ped (M/F) vs NKI. Plus registration
+structural complexity (fractal dimension) by age, CAST (M/F) vs NKI. Plus registration
 regularity (SD of log-Jacobian) by subject age from the clean deformation CSV.
 Edge sharpness is shown only if the two template families share a comparable intensity
 scale (checked at runtime); otherwise it is omitted as not comparable (intensity-dependent)."""
 import json, re, sys, csv, numpy as np
 import matplotlib; matplotlib.use("Agg"); import matplotlib.pyplot as plt
-sys.path.insert(0,"/path/to/cast-project/07_Results_and_Analysis")
+sys.path.insert(0,"/Users/aqua/Documents/PhD/2025 Research/Qualifier PediatricMRITemplate/07_Results_and_Analysis")
 from figs_style import set_style, save, panel_letter, UH, NKI, MALE, FEMALE
 set_style()
 
@@ -27,25 +27,33 @@ def uhser(sex,k):
 def nkiser(k):
     rs=sorted(nki,key=lambda r:r["age"]); return np.array([r["age"] for r in rs]), np.array([r[k] for r in rs])
 
-# registration regularity: std_logJ by subject age (UH, clean CSV)
+# Registration regularity: std_logJ by subject age, pooled over the ten CAST templates.
+#
+# REPOINTED 2026-07-28 to the intensity rerun. The mask-era CSV this used to read came from
+# registrations of a BINARY BRAIN MASK onto a greyscale template (see
+# 04_Reports_and_Planning/DEFORMATION_COST_MASK_ERROR_2026-07-28.md). Two consequences for
+# this panel: the SD of log J drops from ~0.39 to ~0.24, and the cohort is now complete --
+# the mask-era table had std_logJ for only 2,708 of 3,175 rows because 47 subjects' centred
+# images had been lost, whereas the rerun recovered all 47 by header-only recentring and
+# covers the full 319 x 10 = 3,190. The descriptor caption's "47 subjects excluded" caveat
+# no longer applies.
 jac={}
-try:
-    with open("DeformationAnalysis/test_set_on_template_metrics_with_subject_age.csv") as f:
-        for x in csv.DictReader(f):
-            if x["display_dataset"]!="My Template": continue
-            try:
-                a=round(float(x["Age"])); jac.setdefault(a,[]).append(float(x["std_logJ"]))
-            except: pass
-except FileNotFoundError: pass
+with open("DeformationAnalysis/test_set_on_template_metrics_INTENSITY.csv") as f:
+    for x in csv.DictReader(f):
+        if x["display_dataset"]!="My Template": continue
+        a=round(float(x["Age"])); jac.setdefault(a,[]).append(float(x["std_logJ"]))
+n_jac=sum(len(v) for v in jac.values())
+print(f"panel c: {n_jac} registrations across {len(jac)} subject ages")
+if n_jac!=3190: print(f"  WARNING: expected 3,190 -- got {n_jac}")
 
 fig,axes=plt.subplots(1,3,figsize=(10.5,3.4))
 # (a) FD vs age -- the fair, scale-invariant cross-template comparison (UH > NKI)
 ax=axes[0]
 for sex,c in [("male",MALE),("female",FEMALE)]:
-    a,v=uhser(sex,"fd"); ax.plot(a,v,"-o",color=c,ms=4,label=f"UH {sex}")
+    a,v=uhser(sex,"fd"); ax.plot(a,v,"-o",color=c,ms=4,label=f"CAST {sex}")
 if nki: a,v=nkiser("fd"); ax.plot(a,v,"-s",color=NKI,ms=4,label="NKI ref")
 ax.set_xlabel("template age (years)"); ax.set_ylabel("fractal dimension (WM surface)")
-ax.set_title("Structural complexity\n(UH > reference)",fontsize=9); ax.legend(fontsize=6); panel_letter(ax,"a")
+ax.set_title("Structural complexity\n(CAST > reference)",fontsize=9); ax.legend(fontsize=6); panel_letter(ax,"a")
 # (b) Weber contrast vs age -- shown transparently (normalization-dependent, not a superiority claim)
 ax=axes[1]
 for sex,c in [("male",MALE),("female",FEMALE)]:
@@ -59,13 +67,14 @@ if jac:
     a=sorted(jac); m=[np.mean(jac[x]) for x in a]; sd=[np.std(jac[x]) for x in a]
     ax.errorbar(a,m,yerr=sd,fmt="-o",color=UH,ms=4,capsize=2)
 ax.set_xlabel("subject age (years)"); ax.set_ylabel(r"SD of log-Jacobian")
-ax.set_title("Deformation regularity\n(matched-age UH)",fontsize=9); panel_letter(ax,"c")
+# Title corrected: this pools all ten CAST templates, it is not the matched-age subset.
+ax.set_title("Deformation regularity\n(all ten CAST templates)",fontsize=9); panel_letter(ax,"c")
 
-fig.suptitle("Template quality: UH-Ped shows higher structural complexity (FD) than the NKI reference; contrast reflects intensity-normalization; registrations are smooth and regular",fontsize=8.8)
+fig.suptitle("Template quality: CAST shows higher structural complexity (FD) than the NKI reference; contrast reflects intensity-normalization; registrations are smooth and regular",fontsize=8.8)
 fig.tight_layout(rect=[0,0,1,0.93]); save(fig,"figures_final/DDF4_quality")
 
 print("=== DD-F4 quality summary ===")
-print(f"UH Weber mean={np.mean([r['weber'] for r in uh]):.3f}; NKI Weber mean={np.mean([r['weber'] for r in nki]) if nki else float('nan'):.3f}")
-print(f"UH FD mean={np.mean([r['fd'] for r in uh]):.3f}; NKI FD mean={np.mean([r['fd'] for r in nki]) if nki else float('nan'):.3f}")
+print(f"CAST Weber mean={np.mean([r['weber'] for r in uh]):.3f}; NKI Weber mean={np.mean([r['weber'] for r in nki]) if nki else float('nan'):.3f}")
+print(f"CAST FD mean={np.mean([r['fd'] for r in uh]):.3f}; NKI FD mean={np.mean([r['fd'] for r in nki]) if nki else float('nan'):.3f}")
 if nki:
-    print(f"UH edge mean={np.mean([r['edge_strength'] for r in uh]):.3f}; NKI edge mean={np.mean([r['edge_strength'] for r in nki]):.3f} (intensity-scale dependent; compare with care)")
+    print(f"CAST edge mean={np.mean([r['edge_strength'] for r in uh]):.3f}; NKI edge mean={np.mean([r['edge_strength'] for r in nki]):.3f} (intensity-scale dependent; compare with care)")

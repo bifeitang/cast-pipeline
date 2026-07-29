@@ -239,6 +239,133 @@ def cohorts():
     return out
 
 
+VOXEL_MM = 0.8   # acquisition voxel; the yardstick every deformation-cost claim is scaled to
+
+
+def deform():
+    """Deformation cost from the intensity rerun -- the numbers this file previously had
+    NO assertions on, which is how a whole section stayed on mask-era values.
+
+    AGE CONVENTION: |dage| uses the subject's CONTINUOUS age, matching both the paper's
+    "|dage| < 0.5 y" wording and make_figure_F2_agexage_clean.py. analyze_dc_intensity.py
+    bins subject age to its integer directory bin and therefore reports 2.399/2.425 and
+    +0.024 mm/yr instead of 2.404/2.432 and +0.025. Neither changes a conclusion, but they
+    are different conventions and must not be mixed: on the mask-era data the float
+    convention reproduces the published 3.08/3.63/+0.10 exactly, the integer one gives
+    3.02/3.50/+0.067. If you switch conventions, switch the figure and the text with it.
+    """
+    from scipy import stats
+    rows = list(csv.DictReader(open(src(
+        "DeformationAnalysis/test_set_on_template_metrics_INTENSITY.csv"))))
+    cast = [r for r in rows if r["arm"] == "cast"]
+    nki = [r for r in rows if r["arm"] == "nki"]
+    if any(r["disp_component"] != "syn" for r in rows):
+        print("FATAL: intensity table contains non-SyN displacement rows", file=sys.stderr)
+        sys.exit(2)
+    d = np.array([abs(float(r["template_age"]) - float(r["Age"])) for r in cast])
+    v = np.array([float(r["mean_disp_mm"]) for r in cast])
+    near, far = v[d < 0.5], v[d >= 2]
+    lr = stats.linregress(d, v)
+    out = dict(
+        n_cast=len(cast), n_nki=len(nki),
+        n_subj=len({r["subject_id"] for r in cast}),
+        sd=float(v.std()),
+        near=float(np.median(near)), far=float(np.median(far)),
+        n_near=len(near), n_far=len(far),
+        eff=float(np.median(far) - np.median(near)),
+        eff_p=float(stats.mannwhitneyu(near, far)[1]),
+        slope=float(lr.slope), r=float(lr.rvalue), slope_p=float(lr.pvalue),
+        cast_med=float(np.median(v)),
+        nki_med=float(np.median([float(r["mean_disp_mm"]) for r in nki])),
+    )
+    out["eff_vox"] = abs(out["eff"]) / VOXEL_MM * 100
+    out["eff_sd"] = abs(out["eff"]) / out["sd"]
+    out["four_yr"] = abs(out["slope"]) * 4
+    # paired CAST-NKI on the subjects present in both arms
+    pc, pn = {}, {}
+    for r in cast:
+        pc.setdefault(r["subject_id"], []).append(float(r["mean_disp_mm"]))
+    for r in nki:
+        pn.setdefault(r["subject_id"], []).append(float(r["mean_disp_mm"]))
+    both = sorted(set(pc) & set(pn))
+    a = np.array([np.mean(pc[e]) for e in both])
+    b = np.array([np.mean(pn[e]) for e in both])
+    out["paired_n"] = len(both)
+    out["paired_diff"] = float((a - b).mean())
+    out["paired_vox"] = abs(out["paired_diff"]) / VOXEL_MM * 100
+    # signed-curve minimum: the paper used to claim the matched age was cheapest. It is not,
+    # and it was not on the mask data either. Assert the claim is ABSENT, not the value.
+    sd_ = np.array([float(r["template_age"]) - float(r["Age"]) for r in cast])
+    binned = {}
+    for lo in np.arange(-6.5, 6.5, 1):
+        m = (sd_ >= lo) & (sd_ < lo + 1)
+        if m.sum() >= 10:
+            binned[lo + 0.5] = float(np.median(v[m]))
+    out["argmin_bin"] = min(binned, key=binned.get)
+    out["span"] = max(binned.values()) - min(binned.values())
+    out["span_vox"] = out["span"] / VOXEL_MM * 100
+    return out
+
+
+def deform_model():
+    """Refit coefficients, read from the JSON that fit_dc_mixed_model.py writes.
+
+    Kept as a file rather than refitted here so verify_claims.py does not require
+    statsmodels; if the JSON is missing the caller reports it as uncheckable instead of
+    silently skipping. Regenerate with:
+        python fit_dc_mixed_model.py --json
+    """
+    p = os.path.join(HERE, "dc_mixed_model_intensity.json")
+    if not os.path.exists(p):
+        return None
+    return json.load(open(p))["primary"]
+
+
+def age9_jac():
+    """Composed-Jacobian summary behind the supplementary age-nine figure."""
+    rows = list(csv.DictReader(open(src(
+        "DeformationAnalysis/tables/age9_jacobian_summary_by_age_gender_INTENSITY.csv"))))
+    n = np.array([int(r["n"]) for r in rows])
+    mj = np.array([float(r["mean_mean_logJ"]) for r in rows])
+    sj = np.array([float(r["mean_std_logJ"]) for r in rows])
+    fem = np.mean([float(r["mean_mean_logJ"]) for r in rows
+                   if r["template_gender"] == "female"])
+    mal = np.mean([float(r["mean_mean_logJ"]) for r in rows
+                   if r["template_gender"] == "male"])
+    morph = {r["name"]: r for r in
+             (json.loads(l) for l in open(src("morphometry/template_morphometry.jsonl"))
+              if l.strip())}
+    return dict(
+        n=int(n.sum()), pooled=float(np.average(mj, weights=n)),
+        sd_lo=float(sj.min()), sd_hi=float(sj.max()),
+        sd_min_age=min({int(r["Age"]) for r in rows},
+                       key=lambda a: np.mean([float(r["mean_std_logJ"]) for r in rows
+                                              if int(r["Age"]) == a])),
+        gap=float(fem - mal),
+        icv_log=float(np.log(morph["age9_male"]["icv_ml"] /
+                             morph["age9_female"]["icv_ml"])),
+        nondiffeo=float(max(float(r["mean_pct_non_diff"]) for r in rows)),
+    )
+
+
+def deform_delta():
+    """Sex-matched advantage at the age-nine templates (supplementary waterfall)."""
+    rows = [r for r in csv.DictReader(open(src(
+        "DeformationAnalysis/test_set_on_template_metrics_INTENSITY.csv")))
+        if r["arm"] == "cast" and r["template_age"] == "9"]
+    by: dict = {}
+    for r in rows:
+        by.setdefault((r["subject_id"], r["Sex_Text"]), {})[r["template_sex"]] = \
+            float(r["norm_mean_disp"])
+    out = {}
+    for sex in ("male", "female"):
+        dd = [(v["female"] - v["male"]) if sex == "male" else (v["male"] - v["female"])
+              for (e, s), v in by.items() if s == sex and len(v) == 2]
+        out[f"{sex}_n"] = len(dd)
+        out[f"{sex}_pct"] = 100 * float(np.mean(np.array(dd) > 0))
+    return out
+
+
 # ---------------------------------------------------------------- checks ------------
 def run() -> None:
     man = load_tex(MANUSCRIPT)
@@ -332,6 +459,142 @@ def run() -> None:
     check("manuscript", man, "growth-norm cohort", f"{C['growth_norms']:,}",
           detail=f"derived {C['growth_norms']} rows")
 
+    # --- deformation cost, intensity rerun --------------------------------------------
+    # None of this was covered before 2026-07-28, which is exactly why the whole section
+    # sat on mask-era numbers through several careful read-throughs.
+    D = deform()
+    check("manuscript", man, "deformation-cost registrations", f"{D['n_cast']:,}",
+          detail=f"derived {D['n_cast']} CAST rows, {D['n_subj']} subjects")
+    check("manuscript", man, "matched-age median cost", f"{D['near']:.3f}",
+          detail=f"derived {D['near']:.4f} mm, n={D['n_near']} (mask era 3.08)")
+    check("manuscript", man, "mismatched median cost", f"{D['far']:.3f}",
+          detail=f"derived {D['far']:.4f} mm, n={D['n_far']} (mask era 3.63)")
+    check("manuscript", man, "age effect", f"{abs(D['eff']):.3f}",
+          detail=f"derived {D['eff']:+.4f} mm = {D['eff_vox']:.1f}% of a "
+                 f"{VOXEL_MM} mm voxel = {D['eff_sd']:.2f} SD, p={D['eff_p']:.3g}")
+    check("manuscript", man, "age effect as voxel fraction", f"{D['eff_vox']:.1f}\\%",
+          f"{D['eff_vox']:.1f}%",
+          detail="the effect size must appear, not just the p-value")
+    check("manuscript", man, "slope on |dage|", f"{D['slope']:.3f}",
+          detail=f"derived {D['slope']:+.4f} mm/yr, r={D['r']:+.3f}, "
+                 f"p={D['slope_p']:.3g} (mask era +0.10)")
+    check("manuscript", man, "between-subject SD", f"{D['sd']:.3f}",
+          detail=f"derived {D['sd']:.4f} mm (mask era 3.409)")
+    check("manuscript", man, "signed-curve span", f"{D['span']:.3f}",
+          detail=f"derived {D['span']:.4f} mm = {D['span_vox']:.0f}% of a voxel")
+    check("manuscript", man, "CAST vs NKI, CAST median", f"{D['cast_med']:.2f}",
+          detail=f"derived {D['cast_med']:.4f} mm")
+    check("manuscript", man, "CAST vs NKI, NKI median", f"{D['nki_med']:.2f}",
+          detail=f"derived {D['nki_med']:.4f} mm")
+    check("manuscript", man, "CAST-NKI paired difference", f"{abs(D['paired_diff']):.3f}",
+          detail=f"derived {D['paired_diff']:+.4f} mm over {D['paired_n']} subjects "
+                 f"= {D['paired_vox']:.1f}% of a voxel")
+    for paper, tex in (("manuscript", man), ("descriptor", des)):
+        check(paper, tex, "deformation slope stated with its voxel fraction",
+              f"{D['slope']:.3f}",
+              detail=f"derived {D['slope']:+.4f} mm/yr; both papers must carry it")
+
+    # The published text claimed the matched-age template was cheapest. The signed-curve
+    # minimum is at -3 y and was at +3 y on the mask data, so the claim was never supported
+    # by its own evidence. Assert it has not crept back in.
+    if D["argmin_bin"] != 0.0 and states(
+            man, "the matched-age template gave the lowest cost",
+            "matched-age template gave the lowest",
+            "the matched age ($\\Delta=0$) is lowest", "matched age is lowest"):
+        results.append(("MISMATCH", "manuscript", "'matched age is cheapest'",
+                        f"signed-curve minimum is at {D['argmin_bin']:+.0f} y, not 0; "
+                        f"the claim is unsupported on both generations of the data"))
+
+    M = deform_model()
+    if M is None:
+        unchecked("manuscript", "deformation-cost mixed model",
+                  "dc_mixed_model_intensity.json absent; regenerate with "
+                  "`python fit_dc_mixed_model.py --json` (needs statsmodels)")
+    else:
+        check("manuscript", man, "mixed model N", f"{M['n_obs']:,}",
+              detail=f"derived {M['n_obs']} registrations / {M['n_groups']} subjects")
+        for term, label, dp in (("Age", "b1 subject age", 3),
+                                ("template_age", "b2 template age", 3),
+                                ("abs_d_age", "b3 age gap", 3),
+                                ("sex_match", "b4 sex match", 3)):
+            b = M["terms"][term]["beta"]
+            check("manuscript", man, f"mixed model {label}", f"{abs(b):.{dp}f}",
+                  detail=f"derived {b:+.4f} mm "
+                         f"({abs(b) / VOXEL_MM * 100:.1f}% of a voxel), "
+                         f"p={M['terms'][term]['p']:.3g}")
+        check("manuscript", man, "mixed model subject SD", f"{M['subject_sd']:.3f}",
+              detail=f"derived {M['subject_sd']:.4f} mm (mask era 3.05)")
+        check("manuscript", man, "mixed model residual SD", f"{M['residual_sd']:.3f}",
+              detail=f"derived {M['residual_sd']:.4f} mm (mask era 1.39)")
+        check("manuscript", man, "mixed model ICC", f"{M['icc']:.2f}",
+              detail=f"derived {M['icc']:.4f} (mask era 0.83)")
+        # The mask-era fit found b4 non-significant and the paper said so. It is now
+        # significant and tiny. Both halves must be stated or the sentence misleads.
+        if M["terms"]["sex_match"]["p"] < 0.05 and states(
+                man, "sex matching leave no statistically detectable",
+                "age matching and sex matching leave no statistically detectable"):
+            results.append(("MISMATCH", "manuscript", "'no detectable sex-match effect'",
+                            f"b4 = {M['terms']['sex_match']['beta']:+.4f} mm at "
+                            f"p={M['terms']['sex_match']['p']:.2g}; it IS detectable, and "
+                            f"the honest claim is that it is immaterial "
+                            f"({abs(M['terms']['sex_match']['beta']) / VOXEL_MM * 100:.1f}"
+                            f"% of a voxel)"))
+
+    J = age9_jac()
+    check("manuscript", man, "age-9 Jacobian registrations", str(J["n"]),
+          detail=f"derived {J['n']}")
+    check("manuscript", man, "age-9 pooled mean logJ", f"{abs(J['pooled']):.3f}",
+          detail=f"derived {J['pooled']:+.4f} COMPOSED affine-then-SyN "
+                 f"(published -0.108 was composed AND mask-based)")
+    check("manuscript", man, "age-9 SD logJ range",
+          f"{J['sd_lo']:.3f}", detail=f"derived {J['sd_lo']:.4f}-{J['sd_hi']:.4f}")
+    check("manuscript", man, "age-9 template M/F logJ gap", f"{abs(J['gap']):.3f}",
+          detail=f"derived {J['gap']:+.4f}, vs log ICV ratio {J['icv_log']:+.4f} "
+                 f"(agree to {abs(J['gap'] - J['icv_log']):.4f}) -- the gap is template "
+                 f"size, not warp behaviour")
+    if abs(J["gap"] - J["icv_log"]) > 0.02:
+        results.append(("MISMATCH", "manuscript", "age-9 logJ gap vs template ICV ratio",
+                        f"gap {J['gap']:+.4f} no longer matches log ICV ratio "
+                        f"{J['icv_log']:+.4f}; the figure's explanation does not hold"))
+    # The -0.108 vs -0.032 comparison crossed Jacobian conventions. Assert it is gone.
+    if states(man, "-0.108", "$-0.108$", "\\(-0.108\\)"):
+        results.append(("MISMATCH", "manuscript", "stale age-9 Jacobian value",
+                        f"paper still states -0.108 (composed, mask-based); "
+                        f"the intensity value is {J['pooled']:+.4f}"))
+
+    X9 = deform_delta()
+    check("manuscript", man, "sex-matched Delta, male share",
+          f"{X9['male_pct']:.0f}\\%", f"{X9['male_pct']:.0f}%",
+          detail=f"derived {X9['male_pct']:.1f}% of {X9['male_n']} males "
+                 f"(mask era 73%)")
+    check("manuscript", man, "sex-matched Delta, female share",
+          f"{X9['female_pct']:.0f}\\%", f"{X9['female_pct']:.0f}%",
+          detail=f"derived {X9['female_pct']:.1f}% of {X9['female_n']} females "
+                 f"(mask era 30%)")
+
+    # Any mask-era deformation number still in either paper is a drift. But a bare "1.39"
+    # or "3.05" is a number, not a claim -- the descriptor legitimately carries 1.39 as a
+    # CNR quartile bound. Flag a stale value ONLY where it sits next to deformation-cost
+    # wording, for the same reason the interface-error check above windows its matches:
+    # a check that cries wolf is a check people learn to ignore.
+    DEFORM_PHRASE = re.compile(
+        r"deformation[- ]cost|deformation cost|mean displacement|"
+        r"subject-to-template registrations|mixed[- ]effects model|"
+        r"registration cost|displacement metric", re.I)
+    STALE = {"3.08": "matched-age cost", "3.63": "mismatched cost",
+             "3,175": "registration count", "3.409": "between-subject SD",
+             "0.158": "mixed-model b2 (template age)", "3.05": "subject SD",
+             "1.39": "residual SD", "0.108": "age-9 composed Jacobian"}
+    for paper, tex in (("manuscript", man), ("descriptor", des)):
+        n = norm(tex)
+        windows = [n[max(0, m.start() - 400): m.end() + 400]
+                   for m in DEFORM_PHRASE.finditer(n)]
+        for val, what in STALE.items():
+            if any(val in w for w in windows):
+                results.append(("MISMATCH", paper, f"mask-era value {val} still present",
+                                f"{what}; stated near deformation-cost wording but "
+                                f"superseded by the intensity rerun"))
+
     # --- cross-paper consistency -----------------------------------------------------
     shared = re.compile(r"\d+\.\d{2,3}")
     mv = set(shared.findall(norm(man)))
@@ -422,9 +685,15 @@ def run() -> None:
         results.append(("MISMATCH", "manuscript", "background fill amplitude",
                         "as-run scale is 1% of the BACKGROUND standard deviation, "
                         "not 1% of in-brain signal"))
-    unchecked("manuscript", "F2 clean displacement",
-              "mean_disp_mm for age-11 female is 2025-11, measured against a superseded "
-              "template; derivation script does not exist")
+    # Was UNCHECKABLE ("derivation script does not exist") until 2026-07-28. It exists now:
+    # build_dc_intensity_tables.py -> the INTENSITY csv, asserted above. The remaining gap
+    # is the composite cost, which the rerun did not compute.
+    unchecked("manuscript", "translation-artifact panel",
+              "S_translation_artifact plots the composite affine-then-SyN cost, which the "
+              "intensity rerun did not compute (-disp-component syn only) and whose "
+              "transforms were deleted. Its clean axis is still on the mask-era scale. "
+              "Rebuilding needs ~2,076 re-registrations (~3,900 core-hours at the measured "
+              "1.87 core-h/job); the caption discloses the provenance in the meantime")
     unchecked("descriptor", "MRIQC pre/post tables",
               "source is mriqc_output/mriqc_prepost_eval on carya, not mirrored locally")
 
