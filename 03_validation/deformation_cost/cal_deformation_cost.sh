@@ -2,7 +2,11 @@
 # cal_deformation_cost.sh
 # -------------------------------------------------------------
 # Register a subject T1 to a template and compute deformation cost metrics:
-#  - Mean/median/95th displacement magnitude (mm) from a COMPOSED displacement field (Affine + Warp)
+#  - Mean/median/95th displacement magnitude (mm) from a displacement field that is either
+#    the COMPOSED affine o SyN (-disp-component total, default) or the SyN warp alone
+#    (-disp-component syn). The composed field carries the near-rigid coordinate-origin
+#    offset between centred subject images and template space (~31-35 mm); the SyN-only
+#    field does not (~3-4 mm) and is the metric the age-by-age analysis requires.
 #  - Jacobian stats (mean logJ, std logJ, % non-diffeomorphic where detJ <= 0) computed on the SAME field
 #  - Normalized displacement by a characteristic length L (default: template ICV^(1/3))
 #
@@ -20,11 +24,19 @@
 #       [-transform-direction moving2template|template2moving] \
 #       [-diagnostics] \
 #       [-mask-method provided|mean|otsu] \
-#       [-normalize template_icv|subject_icv|geom_mean_icv|diag|none]
+#       [-normalize template_icv|subject_icv|geom_mean_icv|diag|none] \
+#       [-disp-component total|syn]
 #
 # If --template is omitted, defaults to Templates/age9_male_template.nii.gz
 #
 # Notes:
+#   * Displacement component (-disp-component):
+#       total : affine o SyN. Historical default; preserved so existing runs reproduce.
+#       syn   : SyN warp only -- the translation-free "clean" displacement.
+#       This choice CANNOT be undone after the fact: removing a translation from a
+#       displacement magnitude is not algebraic (|d - t| != |d| - |t|), and the warps are
+#       deleted by the storage cleanup. Jacobian columns are identical either way, since a
+#       translation has unit Jacobian. The value used is recorded in metrics.txt.
 #   * Masking:
 #       provided : require --moving-mask and --template-mask
 #       mean     : auto mask via ThresholdAtMean + largest component (default)
@@ -54,6 +66,17 @@ TRANSFORM_DIRECTION="moving2template"
 DIAGNOSTICS=0
 MASK_METHOD="mean"
 
+# Which part of the transform the displacement metrics describe.
+#   total : affine o SyN, the historical default. Carries the near-rigid coordinate-origin
+#           offset between centred subject images and template space, so mean_disp_mm comes
+#           out around 31-35 mm and is dominated by a translation that is independent of age.
+#   syn   : the SyN warp only. This is the "clean" displacement -- around 3-4 mm -- that the
+#           methods paper's age-by-age figure depends on. It is NOT recoverable from a total
+#           run afterwards, because removing a translation from a displacement MAGNITUDE is
+#           not algebraic: |d - t| != |d| - |t|.
+# Jacobian columns are unaffected by the choice (a translation has unit Jacobian).
+DISP_COMPONENT="total"
+
 MOVING=""
 TMPL=""
 MMASK=""
@@ -76,6 +99,7 @@ while [[ $# -gt 0 ]]; do
     -transform-direction|--transform-direction) TRANSFORM_DIRECTION="${2:-}"; shift 2;;
     -diagnostics|--diagnostics) DIAGNOSTICS=1; shift 1;;
     -mask-method|--mask-method) MASK_METHOD="${2:-}"; shift 2;;
+    -disp-component|--disp-component) DISP_COMPONENT="${2:-}"; shift 2;;
     -normalize|--normalize) NORM="${2:-}"; shift 2;;
 
     -h|--help) usage; exit 0;;
@@ -252,6 +276,14 @@ case "${MASK_METHOD}" in
     ;;
 esac
 
+case "${DISP_COMPONENT}" in
+  total|syn) ;;
+  *)
+    echo "ERROR: -disp-component must be total|syn" >&2
+    exit 1
+    ;;
+esac
+
 # ---------- Registration (reused if already present) ----------
 echo "[registration] Mode: ${MODE}" >&2
 REGOUT="${OUTDIR}/transform/sub2tpl"
@@ -280,16 +312,27 @@ fi
 make_total_disp() {
   local direction="$1"
   local out="$2"
+  # Optional third arg overrides the global choice, so the caller can compose the composed
+  # field for the Jacobian even when the displacement is SyN-only.
+  local comp="${3:-$DISP_COMPONENT}"
   case "${direction}" in
     moving2template)
-      antsApplyTransforms -d 3 -r "${TMPL}" -o "[${out},1]" -t "${WARP}" -t "${AFF}"
+      if [[ "${comp}" == "syn" ]]; then
+        antsApplyTransforms -d 3 -r "${TMPL}" -o "[${out},1]" -t "${WARP}"
+      else
+        antsApplyTransforms -d 3 -r "${TMPL}" -o "[${out},1]" -t "${WARP}" -t "${AFF}"
+      fi
       ;;
     template2moving)
       if [[ ! -f "${INVWARP}" ]]; then
         echo "ERROR: Inverse warp not found for template2moving: ${INVWARP}" >&2
         exit 1
       fi
-      antsApplyTransforms -d 3 -r "${TMPL}" -o "[${out},1]" -t "[${AFF},1]" -t "${INVWARP}"
+      if [[ "${comp}" == "syn" ]]; then
+        antsApplyTransforms -d 3 -r "${TMPL}" -o "[${out},1]" -t "${INVWARP}"
+      else
+        antsApplyTransforms -d 3 -r "${TMPL}" -o "[${out},1]" -t "[${AFF},1]" -t "${INVWARP}"
+      fi
       ;;
     *)
       echo "ERROR: -transform-direction must be moving2template|template2moving" >&2
@@ -426,16 +469,52 @@ compute_metrics_for_field() {
   local detJ="$4"
   local out_metrics="$5"
   local direction_label="$6"
+  # Field the JACOBIAN is taken from. Defaults to the displacement field, but the caller
+  # passes the composed field explicitly when -disp-component syn is in force.
+  local jac_field="${7:-$vec_field}"
 
   vector_magnitude "${vec_field}" "${disp_mag}"
 
-  CreateJacobianDeterminantImage 3 "${vec_field}" "${logJ}" 1
-  CreateJacobianDeterminantImage 3 "${vec_field}" "${detJ}" 0
+  # The Jacobian must ALWAYS come from the composed affine o SyN field, whatever
+  # -disp-component selects. The affine here is not a pure translation -- it carries scale
+  # and shear -- so a SyN-only Jacobian is a genuinely different quantity, not a
+  # translation-invariant restatement of the same one. Measured on the age-9-female
+  # validation set, taking it from the SyN-only field moved mean_logJ by a median of 84%
+  # and dropped its correlation with the published values to r=0.77, while the displacement
+  # it was paired with reproduced at r=0.996. Sharing one field between the two metrics
+  # would therefore have silently redefined every Jacobian column in the deformation table
+  # -- including the ones Sec. 2.7 rests on -- as a side effect of fixing the displacement.
+  CreateJacobianDeterminantImage 3 "${jac_field}" "${logJ}" 1
+  CreateJacobianDeterminantImage 3 "${jac_field}" "${detJ}" 0
 
   local mean_disp median_disp p95_disp
   mean_disp="$(fslstats "${disp_mag}" -k "${TMASK}" -M | awk '{print $1}')"
   median_disp="$(fslstats "${disp_mag}" -k "${TMASK}" -P 50 | awk '{print $1}')"
   p95_disp="$(fslstats "${disp_mag}" -k "${TMASK}" -P 95 | awk '{print $1}')"
+
+  # Composite ("total") displacement, from the affine o SyN field.
+  #
+  # When -disp-component syn is in force that field is ALREADY BUILT, for the Jacobian, so
+  # measuring it here costs one vector_magnitude and three fslstats rather than a second
+  # registration. This matters: the translation-artifact panel needs the composite cost
+  # alongside the clean one, and without this the only way to get it was to re-register
+  # every pair. It is also better evidence than the published panel had -- that one paired
+  # rows from two separately-run tables, so a point could mix two registrations of the same
+  # subject; these two numbers now come from one registration by construction.
+  local mean_disp_total median_disp_total p95_disp_total
+  if [[ "${jac_field}" != "${vec_field}" ]]; then
+    local total_mag="${OUTDIR}/disp_mag_composed.nii.gz"
+    vector_magnitude "${jac_field}" "${total_mag}"
+    mean_disp_total="$(fslstats "${total_mag}" -k "${TMASK}" -M | awk '{print $1}')"
+    median_disp_total="$(fslstats "${total_mag}" -k "${TMASK}" -P 50 | awk '{print $1}')"
+    p95_disp_total="$(fslstats "${total_mag}" -k "${TMASK}" -P 95 | awk '{print $1}')"
+  else
+    # -disp-component total: the displacement already IS the composite, so the columns
+    # repeat it rather than being blank. A reader must not have to know which mode ran.
+    mean_disp_total="${mean_disp}"
+    median_disp_total="${median_disp}"
+    p95_disp_total="${p95_disp}"
+  fi
 
   local mean_logJ std_logJ
   mean_logJ="$(fslstats "${logJ}" -k "${TMASK}" -M | awk '{print $1}')"
@@ -466,8 +545,11 @@ PY
 
   if [[ "${out_metrics}" == "metrics.txt" ]]; then
     {
-      printf "moving\ttemplate\tmode\ttransform_direction\tmask_method\tnorm_type\tL_mm\tmean_disp_mm\tmedian_disp_mm\tp95_disp_mm\tnorm_mean_disp\tnorm_median_disp\tnorm_p95_disp\tmean_logJ\tstd_logJ\tpct_non_diffeomorphic\twarp_value_mm\tnormalized_warp_value\n"
-      printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n" \
+      # disp_component is APPENDED so header-based readers keep working. Without it a
+      # metrics.txt does not record which transform its displacement describes, and a
+      # directory holding both conventions is indistinguishable from one holding either.
+      printf "moving\ttemplate\tmode\ttransform_direction\tmask_method\tnorm_type\tL_mm\tmean_disp_mm\tmedian_disp_mm\tp95_disp_mm\tnorm_mean_disp\tnorm_median_disp\tnorm_p95_disp\tmean_logJ\tstd_logJ\tpct_non_diffeomorphic\twarp_value_mm\tnormalized_warp_value\tdisp_component\tmean_disp_total_mm\tmedian_disp_total_mm\tp95_disp_total_mm\n"
+      printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n" \
         "$(basename "${MOVING}")" \
         "$(basename "${TMPL}")" \
         "${MODE}" \
@@ -485,7 +567,11 @@ PY
         "${std_logJ}" \
         "${pct_non_diff}" \
         "${mean_disp}" \
-        "${norm_mean_disp}"
+        "${norm_mean_disp}" \
+        "${DISP_COMPONENT}" \
+        "${mean_disp_total}" \
+        "${median_disp_total}" \
+        "${p95_disp_total}"
     } > "${OUTDIR}/${out_metrics}"
   else
     # diagnostics: append lines with a direction label
@@ -512,17 +598,27 @@ PY
   fi
 }
 
-# ---------- Compose total displacement field (Affine + Warp) ----------
+# ---------- Compose the displacement field ----------
 TOTAL_DISP="${OUTDIR}/total_disp.nii.gz"
-echo "[compose] transform_direction=${TRANSFORM_DIRECTION} -> ${TOTAL_DISP}" >&2
+echo "[compose] transform_direction=${TRANSFORM_DIRECTION} disp_component=${DISP_COMPONENT} -> ${TOTAL_DISP}" >&2
 make_total_disp "${TRANSFORM_DIRECTION}" "${TOTAL_DISP}"
 
-# ---------- Primary metrics (computed on total displacement) ----------
+# The Jacobian always comes from the COMPOSED field so its columns stay comparable with
+# every previously published run. When the displacement is SyN-only these are two
+# different fields, so the composed one is built separately here.
+JAC_FIELD="${TOTAL_DISP}"
+if [[ "${DISP_COMPONENT}" == "syn" ]]; then
+  JAC_FIELD="${OUTDIR}/total_disp_composed.nii.gz"
+  echo "[compose] jacobian field (affine o SyN) -> ${JAC_FIELD}" >&2
+  make_total_disp "${TRANSFORM_DIRECTION}" "${JAC_FIELD}" "total"
+fi
+
+# ---------- Primary metrics ----------
 DISP_MAG="${OUTDIR}/disp_mag.nii.gz"
 LOGJ_TOTAL="${OUTDIR}/logJ_total.nii.gz"
 DETJ_TOTAL="${OUTDIR}/detJ_total.nii.gz"
 
-compute_metrics_for_field "${TOTAL_DISP}" "${DISP_MAG}" "${LOGJ_TOTAL}" "${DETJ_TOTAL}" "metrics.txt" "${TRANSFORM_DIRECTION}"
+compute_metrics_for_field "${TOTAL_DISP}" "${DISP_MAG}" "${LOGJ_TOTAL}" "${DETJ_TOTAL}" "metrics.txt" "${TRANSFORM_DIRECTION}" "${JAC_FIELD}"
 
 # ---------- Optional diagnostics: compute BOTH directions ----------
 if [[ "${DIAGNOSTICS}" -eq 1 ]]; then

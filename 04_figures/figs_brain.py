@@ -15,9 +15,25 @@ were previously drawn in voxel space. Two things go wrong when you do that:
 Both are handled here by reorienting to canonical RAS first (nibabel's
 as_closest_canonical) and then working exclusively in millimetres.
 
-Every panel is cropped to a fixed physical field of view centred on the brain's own
-centroid, so brains are centred, cut to the same box, and directly comparable in size
-across panels regardless of matrix or voxel dimensions.
+Every panel is cropped to a fixed physical field of view, so brains are cut to the same
+box and directly comparable in size across panels regardless of matrix or voxel dimensions.
+
+CENTRING (revised 2026-07-29). Two different centres are involved and conflating them is
+what left uneven margins in the first version:
+
+  * WHICH SLICE to take -- the brain's 3-D centroid. Anatomically meaningful and shared
+    across panels, so rows stay comparable. Unchanged.
+  * WHERE TO PUT THE BOX in that slice -- now the bounding-box centre of the brain content
+    within the slice itself (`center="bbox"`), not the projected 3-D centroid.
+
+The 3-D mask centroid is pulled inferiorly and posteriorly by the brainstem, cerebellum and
+neck remnant, so a box centred on it leaves a wide margin above the vertex and clips toward
+the bottom. The in-plane bounding-box centre puts equal margin on all four sides by
+construction. `center="centroid"` keeps the old behaviour for any caller that wants it.
+
+For an overlay that must stay registered to its underlay, compute the centres ONCE from the
+underlay with `crop_centers()` and pass them to both calls via `centers=`. Letting each
+volume pick its own box would shift the overlay off the anatomy it annotates.
 """
 import numpy as np
 import nibabel as nib
@@ -67,19 +83,15 @@ def _crop(plane, xs_mm, ys_mm, cx, cy, fov):
     return out, (-fov / 2, fov / 2, -fov / 2, fov / 2)
 
 
-def planes_mm(img, fov=FOV_MM, centroid_vox=None, ref_img=None):
-    """Return {'sagittal','coronal','axial'} -> (2-D array, extent-in-mm).
-
-    Slices are taken at the brain centroid (or at `centroid_vox`, in the CANONICAL
-    frame, when a common slice location is wanted across panels). `ref_img`, if given,
-    supplies the centroid instead -- used to hold two strata to the same slice.
+def _plane_data(img, centroid_vox=None, ref_img=None):
+    """Return {plane: (2-D array, xs_mm, ys_mm, centroid_centre_xy)} before cropping.
 
     Arrays are oriented for imshow(origin='lower'):
       sagittal  x = anterior to the LEFT, y = superior up
       coronal   x = subject right to the right, y = superior up
       axial     x = subject right to the right, y = anterior up
-    The returned extent is in mm relative to the brain centroid, so imshow with
-    aspect='equal' renders every panel at true physical size on a shared origin.
+    Every coordinate vector is INCREASING -- the sagittal mirror is applied to the
+    coordinates as well as the data, so _crop's arithmetic holds for all three planes.
     """
     img = canonical(img)
     vol = img.get_fdata()
@@ -99,17 +111,74 @@ def planes_mm(img, fov=FOV_MM, centroid_vox=None, ref_img=None):
     S = np.arange(vol.shape[2]) * zz
     cR, cA, cS = centroid_vox[0] * zx, centroid_vox[1] * zy, centroid_vox[2] * zz
 
+    return {
+        # sagittal: vol[i] is [A, S] -> [S, A], then reverse A so the anterior pole is on
+        # the left; the coordinate vector is mirrored to match, staying increasing.
+        "sagittal": (vol[i, :, :].T[:, ::-1], (2 * cA) - A[::-1], S, (cA, cS)),
+        "coronal": (vol[:, j, :].T, R, S, (cR, cS)),          # [R, S] -> [S, R]
+        "axial": (vol[:, :, k].T, R, A, (cR, cA)),            # [R, A] -> [A, R]
+    }
+
+
+def _bbox_center(arr, xs, ys, thresh):
+    """In-plane bounding-box centre of the brain content, in mm.
+
+    Falls back to None when the slice is empty, so the caller can drop to the centroid
+    rather than centring on nothing.
+    """
+    m = arr > thresh
+    if not m.any():
+        return None
+    cols = np.where(m.any(0))[0]
+    rows = np.where(m.any(1))[0]
+    return (0.5 * (xs[cols[0]] + xs[cols[-1]]),
+            0.5 * (ys[rows[0]] + ys[rows[-1]]))
+
+
+def crop_centers(img, centroid_vox=None, ref_img=None, frac=BRAIN_FRAC, thresh=None):
+    """{plane: (cx_mm, cy_mm)} bounding-box centres, for sharing between overlay pairs.
+
+    `thresh` overrides the intensity cut; pass the UNDERLAY's threshold when centring an
+    overlay so both are boxed identically.
+    """
+    data = _plane_data(img, centroid_vox, ref_img)
+    vmax = canonical(img).get_fdata().max()
+    t = frac * vmax if thresh is None else thresh
     out = {}
-    # sagittal: vol[i] is [A, S] -> transpose to [S, A], then reverse the A axis so the
-    # anterior pole is on the left. Reversing the data means the mm coordinate of column
-    # c is A[::-1][c], so mirror the coordinate vector the same way.
-    out["sagittal"] = _crop(vol[i, :, :].T[:, ::-1], (2 * cA) - A[::-1], S, cA, cS, fov)
+    for plane, (arr, xs, ys, default) in data.items():
+        out[plane] = _bbox_center(arr, xs, ys, t) or default
+    return out
 
-    # coronal: vol[:, j] is [R, S] -> [S, R]
-    out["coronal"] = _crop(vol[:, j, :].T, R, S, cR, cS, fov)
 
-    # axial: vol[:, :, k] is [R, A] -> [A, R]
-    out["axial"] = _crop(vol[:, :, k].T, R, A, cR, cA, fov)
+def planes_mm(img, fov=FOV_MM, centroid_vox=None, ref_img=None,
+              center="bbox", centers=None):
+    """Return {'sagittal','coronal','axial'} -> (2-D array, extent-in-mm).
+
+    Slices are taken at the brain centroid (or at `centroid_vox`, in the CANONICAL frame,
+    when a common slice location is wanted across panels). `ref_img`, if given, supplies
+    the centroid instead -- used to hold two strata to the same slice.
+
+    `center` chooses where the crop box sits within each slice:
+      "bbox"      the brain's in-plane bounding-box centre -- equal margins on all four
+                  sides. The default, and what figures should normally use.
+      "centroid"  the projected 3-D centroid, which sits low and posterior because the
+                  brainstem and cerebellum drag it there. Kept for reproducing older
+                  output.
+    `centers` overrides both with an explicit {plane: (cx, cy)} -- pass the underlay's
+    `crop_centers()` when cropping a registered overlay.
+
+    The returned extent is in mm relative to the crop centre, so imshow with
+    aspect='equal' renders every panel at true physical size.
+    """
+    data = _plane_data(img, centroid_vox, ref_img)
+    if centers is None and center == "bbox":
+        vmax = canonical(img).get_fdata().max()
+        centers = {p: _bbox_center(a, xs, ys, BRAIN_FRAC * vmax) or d
+                   for p, (a, xs, ys, d) in data.items()}
+    out = {}
+    for plane, (arr, xs, ys, default) in data.items():
+        cx, cy = (centers or {}).get(plane, default)
+        out[plane] = _crop(arr, xs, ys, cx, cy, fov)
     return out
 
 

@@ -492,6 +492,30 @@ compute_metrics_for_field() {
   median_disp="$(fslstats "${disp_mag}" -k "${TMASK}" -P 50 | awk '{print $1}')"
   p95_disp="$(fslstats "${disp_mag}" -k "${TMASK}" -P 95 | awk '{print $1}')"
 
+  # Composite ("total") displacement, from the affine o SyN field.
+  #
+  # When -disp-component syn is in force that field is ALREADY BUILT, for the Jacobian, so
+  # measuring it here costs one vector_magnitude and three fslstats rather than a second
+  # registration. This matters: the translation-artifact panel needs the composite cost
+  # alongside the clean one, and without this the only way to get it was to re-register
+  # every pair. It is also better evidence than the published panel had -- that one paired
+  # rows from two separately-run tables, so a point could mix two registrations of the same
+  # subject; these two numbers now come from one registration by construction.
+  local mean_disp_total median_disp_total p95_disp_total
+  if [[ "${jac_field}" != "${vec_field}" ]]; then
+    local total_mag="${OUTDIR}/disp_mag_composed.nii.gz"
+    vector_magnitude "${jac_field}" "${total_mag}"
+    mean_disp_total="$(fslstats "${total_mag}" -k "${TMASK}" -M | awk '{print $1}')"
+    median_disp_total="$(fslstats "${total_mag}" -k "${TMASK}" -P 50 | awk '{print $1}')"
+    p95_disp_total="$(fslstats "${total_mag}" -k "${TMASK}" -P 95 | awk '{print $1}')"
+  else
+    # -disp-component total: the displacement already IS the composite, so the columns
+    # repeat it rather than being blank. A reader must not have to know which mode ran.
+    mean_disp_total="${mean_disp}"
+    median_disp_total="${median_disp}"
+    p95_disp_total="${p95_disp}"
+  fi
+
   local mean_logJ std_logJ
   mean_logJ="$(fslstats "${logJ}" -k "${TMASK}" -M | awk '{print $1}')"
   std_logJ="$(fslstats "${logJ}" -k "${TMASK}" -S | awk '{print $1}')"
@@ -524,8 +548,8 @@ PY
       # disp_component is APPENDED so header-based readers keep working. Without it a
       # metrics.txt does not record which transform its displacement describes, and a
       # directory holding both conventions is indistinguishable from one holding either.
-      printf "moving\ttemplate\tmode\ttransform_direction\tmask_method\tnorm_type\tL_mm\tmean_disp_mm\tmedian_disp_mm\tp95_disp_mm\tnorm_mean_disp\tnorm_median_disp\tnorm_p95_disp\tmean_logJ\tstd_logJ\tpct_non_diffeomorphic\twarp_value_mm\tnormalized_warp_value\tdisp_component\n"
-      printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n" \
+      printf "moving\ttemplate\tmode\ttransform_direction\tmask_method\tnorm_type\tL_mm\tmean_disp_mm\tmedian_disp_mm\tp95_disp_mm\tnorm_mean_disp\tnorm_median_disp\tnorm_p95_disp\tmean_logJ\tstd_logJ\tpct_non_diffeomorphic\twarp_value_mm\tnormalized_warp_value\tdisp_component\tmean_disp_total_mm\tmedian_disp_total_mm\tp95_disp_total_mm\n"
+      printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n" \
         "$(basename "${MOVING}")" \
         "$(basename "${TMPL}")" \
         "${MODE}" \
@@ -544,7 +568,10 @@ PY
         "${pct_non_diff}" \
         "${mean_disp}" \
         "${norm_mean_disp}" \
-        "${DISP_COMPONENT}"
+        "${DISP_COMPONENT}" \
+        "${mean_disp_total}" \
+        "${median_disp_total}" \
+        "${p95_disp_total}"
     } > "${OUTDIR}/${out_metrics}"
   else
     # diagnostics: append lines with a direction label

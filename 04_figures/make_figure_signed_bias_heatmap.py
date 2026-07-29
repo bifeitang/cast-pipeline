@@ -46,12 +46,12 @@ import json, sys, os
 import numpy as np, nibabel as nib
 import matplotlib; matplotlib.use("Agg"); import matplotlib.pyplot as plt
 from matplotlib.colors import TwoSlopeNorm
-sys.path.insert(0, "/path/to/cast-project/07_Results_and_Analysis")
+sys.path.insert(0, "/Users/aqua/Documents/PhD/2025 Research/Qualifier PediatricMRITemplate/07_Results_and_Analysis")
 from figs_style import set_style, save, DIV_CMAP
-from figs_brain import planes_mm, canonical, brain_centroid_vox, window
+from figs_brain import planes_mm, canonical, brain_centroid_vox, window, crop_centers
 set_style()
 
-ROOT = "/path/to/cast-project"
+ROOT = "/Users/aqua/Documents/PhD/2025 Research/Qualifier PediatricMRITemplate"
 HEAT = f"{ROOT}/07_Results_and_Analysis/sweep_aggregate/heatmaps"
 TPL  = f"{ROOT}/08_Working_Temp/InspectionTemp/UpdatedTemplates"
 
@@ -85,8 +85,13 @@ for r, (stratum, label) in enumerate(STRATA):
     # canonical frame, and crop each panel to a fixed 180 mm box around it. The overlay
     # is a thin boundary shell, so its own centroid is a poor centring reference.
     cen = brain_centroid_vox(tp)
-    ov_p = planes_mm(ov_img, centroid_vox=cen)
-    tp_p = planes_mm(tp_img, centroid_vox=cen)
+    # Centre each panel on the TEMPLATE's in-plane bounding box so the margins are even,
+    # then crop the overlay with the identical boxes. Deriving the overlay's own boxes
+    # would shift it off the anatomy it annotates -- it is a thin boundary shell whose
+    # bounding box is not the brain's.
+    boxes = crop_centers(tp_img, centroid_vox=cen)
+    ov_p = planes_mm(ov_img, centroid_vox=cen, centers=boxes)
+    tp_p = planes_mm(tp_img, centroid_vox=cen, centers=boxes)
     n = summ["n_subjects"]
     report.append((stratum, n, summ["cortical"]["mean_signed_err_mm"],
                    ov_img.get_fdata()[ov_img.get_fdata() != 0].mean(),

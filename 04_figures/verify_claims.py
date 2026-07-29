@@ -348,6 +348,40 @@ def age9_jac():
     )
 
 
+def affine_component():
+    """The affine's contribution, from the dedicated both-components re-registration.
+
+    Replaces the mask-era "translation artifact" panel. Its claim of a CONSTANT ~32 mm
+    offset inflating the cost ~11x does not survive: measured, the affine adds a median
+    4.23 mm with CV 0.58 over a 0.6-22.9 mm range. Only the "independent of age" half of
+    the old claim held. Assertions below cover both the values and the absence of the
+    withdrawn constant-offset language.
+    """
+    from scipy import stats
+    rows = []
+    for p in sorted(glob.glob(os.path.join(HERE, "dc_translation", "**", "metrics.txt"),
+                              recursive=True)):
+        parts = p.split(os.sep)
+        r = list(csv.DictReader(open(p), delimiter="\t"))[0]
+        if "mean_disp_total_mm" not in r or r.get("disp_component") != "syn":
+            continue
+        rows.append((int(parts[-3]), float(r["mean_disp_mm"]),
+                     float(r["mean_disp_total_mm"])))
+    if not rows:
+        return None
+    sage = np.array([r[0] for r in rows], dtype=float)
+    c = np.array([r[1] for r in rows])
+    t = np.array([r[2] for r in rows])
+    off = t - c
+    lr = stats.linregress(sage, off)
+    return dict(n=len(rows), clean=float(np.median(c)), total=float(np.median(t)),
+                ratio=float(np.median(t) / np.median(c)),
+                off_med=float(np.median(off)), off_lo=float(off.min()),
+                off_hi=float(off.max()), cv=float(off.std() / off.mean()),
+                r=float(np.corrcoef(c, t)[0, 1]), age_p=float(lr.pvalue),
+                age_slope=float(lr.slope))
+
+
 def deform_delta():
     """Sex-matched advantage at the age-nine templates (supplementary waterfall)."""
     rows = [r for r in csv.DictReader(open(src(
@@ -562,6 +596,40 @@ def run() -> None:
                         f"paper still states -0.108 (composed, mask-based); "
                         f"the intensity value is {J['pooled']:+.4f}"))
 
+    AC = affine_component()
+    if AC is None:
+        unchecked("manuscript", "affine-component panel",
+                  "dc_translation/ absent; pull with rsync from "
+                  "carya:/project/contreras-vidal/Yang/DC_TRANSLATION_2026-07-29/")
+    else:
+        check("manuscript", man, "affine-component registrations", str(AC["n"]),
+              detail=f"derived {AC['n']}")
+        check("manuscript", man, "composite median cost", f"{AC['total']:.2f}",
+              detail=f"derived {AC['total']:.4f} mm (published 35.3)")
+        check("manuscript", man, "composite/SyN ratio", f"{AC['ratio']:.1f}",
+              detail=f"derived {AC['ratio']:.3f}x (published ~11x)")
+        check("manuscript", man, "affine contribution median", f"{AC['off_med']:.2f}",
+              detail=f"derived {AC['off_med']:.4f} mm")
+        check("manuscript", man, "affine contribution CV", f"{AC['cv']:.2f}",
+              detail=f"derived {AC['cv']:.4f} over {AC['off_lo']:.2f}-{AC['off_hi']:.2f} mm "
+                     f"-- this is what refutes 'constant offset'")
+        check("manuscript", man, "composite vs SyN correlation", f"{AC['r']:.2f}",
+              detail=f"derived r={AC['r']:+.4f}")
+        # The SyN median from this independent sample must agree with the main analysis, or
+        # the two are measuring different things and one of them is wrong.
+        if abs(AC["clean"] - D["cast_med"]) > 0.02:
+            results.append(("MISMATCH", "manuscript", "affine panel vs main SyN median",
+                            f"panel {AC['clean']:.4f} mm vs main analysis "
+                            f"{D['cast_med']:.4f} mm -- independent samples of the same "
+                            f"quantity should agree"))
+        # The withdrawn claim. "Constant" was the load-bearing word and it is false.
+        if states(man, "constant coordinate-origin offset", "near-rigid $\\sim$60",
+                  "near-rigid ~60", "inflated $\\sim$11", "inflated ~11"):
+            results.append(("MISMATCH", "manuscript", "'constant coordinate-origin offset'",
+                            f"the affine contribution has CV {AC['cv']:.2f} over "
+                            f"{AC['off_lo']:.2f}-{AC['off_hi']:.2f} mm; it is not constant, "
+                            f"and the inflation is {AC['ratio']:.1f}x not ~11x"))
+
     X9 = deform_delta()
     check("manuscript", man, "sex-matched Delta, male share",
           f"{X9['male_pct']:.0f}\\%", f"{X9['male_pct']:.0f}%",
@@ -685,15 +753,13 @@ def run() -> None:
         results.append(("MISMATCH", "manuscript", "background fill amplitude",
                         "as-run scale is 1% of the BACKGROUND standard deviation, "
                         "not 1% of in-brain signal"))
-    # Was UNCHECKABLE ("derivation script does not exist") until 2026-07-28. It exists now:
-    # build_dc_intensity_tables.py -> the INTENSITY csv, asserted above. The remaining gap
-    # is the composite cost, which the rerun did not compute.
-    unchecked("manuscript", "translation-artifact panel",
-              "S_translation_artifact plots the composite affine-then-SyN cost, which the "
-              "intensity rerun did not compute (-disp-component syn only) and whose "
-              "transforms were deleted. Its clean axis is still on the mask-era scale. "
-              "Rebuilding needs ~2,076 re-registrations (~3,900 core-hours at the measured "
-              "1.87 core-h/job); the caption discloses the provenance in the meantime")
+    # Two gaps closed rather than carried:
+    #   "F2 clean displacement -- derivation script does not exist" (until 2026-07-28)
+    #       -> build_dc_intensity_tables.py, asserted above.
+    #   "translation-artifact panel -- composite cost unrecoverable" (until 2026-07-29)
+    #       -> cal_deformation_cost.sh now emits the composite from the field the Jacobian
+    #          already uses; DC_TRANSLATION_2026-07-29 re-registered 647 pairs and the
+    #          panel's numbers are asserted above.
     unchecked("descriptor", "MRIQC pre/post tables",
               "source is mriqc_output/mriqc_prepost_eval on carya, not mirrored locally")
 
