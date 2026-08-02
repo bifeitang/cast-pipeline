@@ -46,12 +46,12 @@ import json, sys, os
 import numpy as np, nibabel as nib
 import matplotlib; matplotlib.use("Agg"); import matplotlib.pyplot as plt
 from matplotlib.colors import TwoSlopeNorm
-sys.path.insert(0, "/Users/aqua/Documents/PhD/2025 Research/Qualifier PediatricMRITemplate/07_Results_and_Analysis")
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from figs_style import set_style, save, DIV_CMAP
 from figs_brain import planes_mm, canonical, brain_centroid_vox, window, crop_centers
 set_style()
 
-ROOT = "/Users/aqua/Documents/PhD/2025 Research/Qualifier PediatricMRITemplate"
+ROOT = "/path/to/cast-project"
 HEAT = f"{ROOT}/07_Results_and_Analysis/sweep_aggregate/heatmaps"
 TPL  = f"{ROOT}/08_Working_Temp/InspectionTemp/UpdatedTemplates"
 

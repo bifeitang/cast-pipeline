@@ -24,15 +24,16 @@ INTERMEDIATE pipeline, not the original. The intensity measurement is the author
 
 Ages: the ablation is at age nine. The age-11-female rebuild does not enter this figure.
 """
+import os
 import sys
 import numpy as np, nibabel as nib
 import matplotlib; matplotlib.use("Agg"); import matplotlib.pyplot as plt
-sys.path.insert(0, "/Users/aqua/Documents/PhD/2025 Research/Qualifier PediatricMRITemplate/07_Results_and_Analysis")
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from figs_style import set_style, save
 from figs_brain import planes_mm, canonical, window, brain_extent_mm
 set_style()
 
-ROOT = "/Users/aqua/Documents/PhD/2025 Research/Qualifier PediatricMRITemplate"
+ROOT = "/path/to/cast-project"
 PANELS = [
     ("Original pipeline",
      f"{ROOT}/07_Results_and_Analysis/mriqc_result/subject_folder/old/old_age9f_template.nii.gz", 17.13),

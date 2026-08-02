@@ -69,7 +69,7 @@ def main():
             s = r["subject_id"]
             # no roster-membership guard: this file is generated FROM the roster, and its
             # ids are the canonical ones. Requiring `s in roster` would drop subjects whose
-            # roster key carries an extra index digit (NDARJ257ZU2 vs NDARJ257ZU23).
+            # roster key carries an extra index digit (an 11-char id read as 12).
             if s not in vol:
                 vol[s] = (float(r["wm_ml"]), float(r["gm_ml"]),
                           float(r["csf_ml"]), float(r["icv_ml"]))
@@ -81,7 +81,7 @@ def main():
         if s not in vol and len(s) == 12 and s[:11] in vol:
             # NDAR ids are 11 OR 12 chars and the build appends a numeric index, so a
             # 12-char prefix can be a real 11-char id plus the first digit of its index
-            # (NDARJ257ZU2 + "3"). Fall back only when the shorter form actually resolves.
+            # Fall back only when the shorter form actually resolves.
             s = s[:11]
         if s not in vol:
             missing.append((s, stratum))

@@ -43,7 +43,9 @@ pipeline runs with **no MATLAB license**.
 HBN data are distributed by the Child Mind Institute through INDI under their data-use terms
 and are **not** redistributed here. No subject identifiers appear in this repository: per-subject
 references are replaced with `SUBJECT_ID` / `REFERENCE_SUBJECT` placeholders, and the HBN download
-lists (subject manifests) are excluded. Released CAST templates are group-level averages
+lists (subject manifests) are excluded. A few identifiers that had survived in explanatory code
+comments were removed in a later commit; those remain reachable in the git history of the files
+concerned. Released CAST templates are group-level averages
 containing no subject-identifiable data; the full library is distributed via the data DOI.
 
 ## License

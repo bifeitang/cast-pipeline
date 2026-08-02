@@ -24,9 +24,9 @@ TWO DEFECTS IN THE SOURCE FILE, both handled here and both reported at run time:
    next record's `age_dir` ("0.000000" + "10" -> "0.00000010") and the first record's
    trailing Sex_Code,Sex_Text are gone entirely. pandas.read_csv simply throws on this.
    Repaired by splitting at the decimal and recovering the lost sex from the same
-   subject's other rows (NDARZM877DMC, female in all three of its intact rows).
+   subject's other rows (female in all three of its intact rows).
 
-2. One subject carries CONTRADICTORY sex labels: NDARAX431KJ2 is Sex_Code=0/male on
+2. One subject carries CONTRADICTORY sex labels: it is Sex_Code=0/male on
    three of its four rows and Sex_Code=1/female on the fourth (age9_female x icv). It is
    a single-row label corruption, not an ambiguous subject, so sex is resolved by
    majority vote per subject -- male here, 3:1.

@@ -6,7 +6,7 @@ Edge sharpness is shown only if the two template families share a comparable int
 scale (checked at runtime); otherwise it is omitted as not comparable (intensity-dependent)."""
 import json, re, sys, csv, numpy as np
 import matplotlib; matplotlib.use("Agg"); import matplotlib.pyplot as plt
-sys.path.insert(0,"/Users/aqua/Documents/PhD/2025 Research/Qualifier PediatricMRITemplate/07_Results_and_Analysis")
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from figs_style import set_style, save, panel_letter, UH, NKI, MALE, FEMALE
 set_style()
 
